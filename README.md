@@ -20,6 +20,8 @@ The description is then posted back to the PR via an authenticated API call.
 ## Demo
 *(Insert GIF or Video link of the bot in action here)*
 
+"Testing my n8n webhook PR trigger!
+
 ## Future Enhancements
 * Implementing full OAuth App flow for wider distribution.
 * Adding fallback notifications (e.g., Telegram/Slack) for LLM or API rate-limiting errors.
