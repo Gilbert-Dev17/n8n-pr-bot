@@ -44,6 +44,8 @@ The description is then posted back to the PR via an authenticated API call.
   <img src="demos/n8n-pr-bot-PR.gif" width="800" alt="PR bot creating PR in realtime">
 </p>
 
+> **Note on Performance:** The PR generation process takes a moment to complete. This latency is primarily due to the rate limits and processing priority of the **free tier of the Google Gemini API**, rather than the automation pipeline itself. Upgrading to a production-grade paid API key would reduce the generation time to just a few seconds.
+
 ## Future Enhancements
 * Implementing a full OAuth App flow for wider distribution.
 * Supporting custom PR templates on a per-repository basis.
