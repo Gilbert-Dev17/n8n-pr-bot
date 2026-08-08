@@ -16,10 +16,11 @@ The description is then posted back to the PR via an authenticated API call.
 ## Architecture
 1. **Trigger**: A GitHub Webhook listens for `Pull requests` events (`opened` and `reopened` actions; all other PR event types are acknowledged and ignored).
 2. **Fetch Data**: The workflow calls the GitHub REST API (`GET /repos/{owner}/{repo}/pulls/{pull_number}/commits`) to extract the list of commit messages.
-3. **LLM Processing**: The commit data is passed to a Gemini node with a system prompt enforcing a strict PR template format (Title, Summary, grouped Changes with rationale, conditional Testing Notes).
-4. **Post Update**: A GitHub REST API call (`PATCH`) updates the PR description with the generated summary.
-5. **Notifications**: Success or failure triggers an email notification via Gmail API.
-6. **Webhook Response**: Every path (ignored, success, or failure) returns an explicit JSON response with an appropriate HTTP status code (`200` / `500`), so GitHub's webhook delivery log always reflects the real outcome.
+3. **Data Aggregation**: An Aggregate node bundles the individual commit objects returned by GitHub into a single array. This prevents n8n from executing the downstream nodes multiple times for each commit, ensuring the LLM analyzes the entire commit history at once.
+4. **LLM Processing**: The combined commit array is passed to a Gemini node with a system prompt enforcing a strict PR template format (Title, Summary, grouped Changes with rationale, conditional Testing Notes).
+5. **Post Update**: A GitHub REST API call (`PATCH`) updates the PR description with the generated summary.
+6. **Notifications**: Success or failure triggers an email notification via Gmail API.
+7. **Webhook Response**: Every path (ignored, success, or failure) returns an explicit JSON response with an appropriate HTTP status code (`200` / `500`), so GitHub's webhook delivery log always reflects the real outcome.
 
 <p align="center">
   <img src="screenshots/pr-bot-flow.png" width="1200" alt="PR bot screenshot">
