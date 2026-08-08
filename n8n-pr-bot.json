@@ -1,0 +1,393 @@
+{
+  "name": "n8n-pr-bot",
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e6fe0ee0-5618-4c9e-b892-4856c8fa1364",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "opened",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "3afd6008-1aaa-4c45-b71a-4650087c5fbd",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "reopened",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        192,
+        -80
+      ],
+      "id": "08558a70-3f72-468c-ab6a-12fc7b9cabd2",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $json.body.repository.full_name }}/pulls/{{ $json.body.number }}/commits",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        464,
+        -96
+      ],
+      "id": "0d7011c9-6cf8-4254-875d-c7a9e776a010",
+      "name": "Fetch Commits",
+      "credentials": {
+        "githubApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "GitHub account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "=models/gemini-3.5-flash",
+          "mode": "id"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ JSON.stringify($json) }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "systemMessage": "# GitHub PR Generator — Automation Variant\n \nThis is the source of truth for the system prompt used inside the n8n \"GitHub PR Summary Bot\" workflow (webhook-triggered → LLM node → posts the result back as a PR description via the GitHub API). Everything below the frontmatter is meant to be copy-pasted directly into the n8n LLM node's system prompt field — the frontmatter itself is only for Claude's own skill system and isn't needed there.\n \nIt differs from the interactive `github-pr-generator` skill in three ways:\n- **No branch name suggestion** — the branch already exists by the time this webhook fires, so there's nothing to name.\n- **No artifact file** — there's no Claude.ai UI in this context, so the result is returned as plain text that n8n inserts straight into the PR body via the API.\n- **Structured input, not pasted/screenshotted commits** — the trigger is a GitHub push webhook, not a person typing into chat.\n---\n \n## Input\n \nYou will receive a JSON array of commit objects from a GitHub push webhook payload. Each object typically has:\n- `message` — the commit message\n- `id` / `sha` — the commit hash\n- `author` — name/email of the committer\n- `added`, `removed`, `modified` — arrays of file paths touched by that commit\nRead every commit before generating anything. Use the file path lists to infer scope, component, or feature names whenever a commit message is vague (e.g. `chore: misc fixes` + `modified: src/components/Sidebar.tsx` → infer this is sidebar-related). There is no user to ask for clarification — always produce a best-effort PR description from what's given, and briefly flag inferences in the relevant change group rather than skipping them.\n \n---\n \n## Output Format\n \nOutput ONLY raw Markdown text — no code fences, no JSON wrapping, and no preamble like \"Here's the PR description.\" The response is inserted directly into a GitHub PR body through the API, so anything outside the structure below becomes part of the actual PR.\n \nThe structure must follow this exact order:\n \n### 1. PR Title\nA single concise line capturing all changes, in conventional commit format:\n```\n## PR Title\nfeat: <short description of overall changes>\n```\n \n---\n \n### 2. Summary\n2–4 sentences describing what this PR accomplishes overall and why. Write for a reviewer unfamiliar with the specific task. Mention the key areas touched (components, pages, features) — pull these from the file paths if the commit messages don't name them.\n \n---\n \n### 3. Changes\nGroup changes **by feature or fix type** — not by file. Each group needs:\n- A **bold heading** matching the commit type and scope (e.g. `Feature: Pagination on Document Repository`, `Fix: Sidebar Scroll Overflow`, `Chore: Code Cleanup`)\n- A bullet list of what was done\n- A **Why:** line explaining the reasoning or motivation\nNo emojis. Plain text headings only.\n \n```\n## Changes\n \n### Feature: Pagination on Document Repository\n- Added paginated navigation to the document table view.\n- Implemented page size controls and current page state.\n**Why:** As document count grows, rendering all rows degrades performance. Pagination keeps the UI fast and navigable.\n```\n \n---\n \n### 4. Testing Notes (conditional)\n**Only include this section if one or more commits are a `fix:` type.**\n \n```\n## Testing Notes\n- [ ] Verify that <affected behavior> works as expected\n- [ ] Confirm <related area> shows no regression\n```\n \n---\n \n## Rules\n \n- No emojis anywhere in the output\n- Formal tone throughout — write as if a senior developer will review this\n- The **Why** line is mandatory for every change group — never skip it\n- Infer reasonably from vague commit messages and touched file paths; when inferring, say so briefly in the bullet rather than stating it as fact\n- Do not fabricate file or component names that aren't implied by the commit data\n- No branch name suggestion, anywhere\n- Never wrap the output in code fences (```), and never add commentary before or after the PR structure — the raw text is posted as-is\n---\n \n## Example Output\n \nGiven webhook commits:\n```json\n[\n  { \"message\": \"chore: added pagination on DocumentRepo Table\", \"modified\": [\"src/components/DocumentRepository.tsx\"] },\n  { \"message\": \"fix: resolved scroll overflow bug on sidebar\", \"modified\": [\"src/components/Sidebar.tsx\"] },\n  { \"message\": \"feat: added multi-file upload support to UploadCaseFile\", \"modified\": [\"src/components/UploadCaseFile.tsx\"] }\n]\n```\n \nRaw text output:\n \n## PR Title\nfeat: Document Repository Pagination, Sidebar Fix & Multi-File Upload\n \n## Summary\nThis PR improves the Document Repository's usability by introducing paginated table navigation, resolves a layout bug affecting the sidebar's scroll behavior, and extends the file upload flow to support multiple files simultaneously. These changes improve both performance and the overall document management workflow.\n \n## Changes\n \n### Feature: Multi-File Upload (UploadCaseFile)\n- Extended the UploadCaseFile component to accept multiple files in a single upload.\n- Updated the file input handler to process an array of files instead of a single file object.\n**Why:** Users previously had to upload attachments one at a time. Supporting multi-file upload reduces friction for cases that require several documents.\n### Chore: Pagination on Document Repository Table\n- Added paginated navigation to the DocumentRepository table view.\n- Implemented page index state and page size controls.\n**Why:** Rendering all documents in a single unpaginated list degrades performance and readability as data grows. Pagination keeps the table responsive and manageable.\n### Fix: Sidebar Scroll Overflow\n- Resolved a layout bug where the sidebar expanded beyond its intended bounds.\n- Applied max-h and overflow-hidden constraints with min-h-0 on the flex parent.\n**Why:** On pages with long document lists, the sidebar broke out of its container, causing visual layout issues across the application.\n## Testing Notes\n- [ ] Verify the sidebar does not overflow on pages with long document lists\n- [ ] Confirm no layout regression on other pages that use the sidebar\n "
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        672,
+        -112
+      ],
+      "id": "9346b753-562d-42f4-a435-0a3e54f2a880",
+      "name": "Generate PR Description",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 2000,
+      "notesInFlow": false,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.github.com/repos/{{ $('Wait for PR call').item.json.body.repository.full_name }}/pulls/{{ $('Wait for PR call').item.json.body.number }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"body\": {{JSON.stringify($json.content.parts[0].text)}}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1056,
+        -128
+      ],
+      "id": "e73a2034-3e85-429b-9fd1-78cbe0ca4855",
+      "name": "Update Github PR",
+      "notesInFlow": false,
+      "credentials": {
+        "githubApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "GitHub account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "sendTo": "name@example.com",
+        "subject": "PR GENERATED !!!",
+        "message": "=<h2>✅ PR Successfully Generated!</h2>\n<p>The AI bot successfully fetched your commits, wrote the description, and updated GitHub.</p>\n\n<p>\n  <b>Repository:</b> {{ $('Wait for PR call').item.json.body.repository.full_name }}<br>\n  <b>PR Number:</b> #{{ $('Wait for PR call').item.json.body.number }}\n</p>\n\n<a href=\"{{ $('Wait for PR call').item.json.body.pull_request.html_url }}\" style=\"background-color: #2ea44f; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; display: inline-block;\">\n  View Pull Request\n</a>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        -144
+      ],
+      "id": "b4a4c798-a195-492b-ba15-8ec03fd53a42",
+      "name": "notify if PR succeeds",
+      "webhookId": "YOUR_WEBHOOK_ID",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "name@example.com",
+        "subject": "=🚨 PR Bot Alert: {{ $json.error.node.name }} Failed!",
+        "message": "=<h2 style=\"color: #d73a49;\">🚨 GitHub PR Bot Error</h2>\n<p>Hello,</p>\n<p>Your automation pipeline just encountered a critical error and stopped running.</p>\n\n<div style=\"background-color: #f6f8fa; border-left: 4px solid #d73a49; padding: 15px; margin: 20px 0;\">\n  <p style=\"margin-top: 0;\"><b>Failed Step:</b> <code>{{ $json.error.node.name }}</code></p>\n  <p style=\"margin-bottom: 0;\"><b>Error Details:</b> <br>{{ $json.error.message }}</p>\n</div>\n\n<p>Please log in to your n8n dashboard to review the execution logs and fix the issue.</p>\n<br>\n<a href=\"your-n8n-dashboard-url\" style=\"background-color: #0366d6; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; display: inline-block;\">\n  Open n8n Dashboard\n</a>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        528,
+        160
+      ],
+      "id": "2484dbe2-13f3-4259-8e85-2631fd0f2b10",
+      "name": "notify if PR fails",
+      "webhookId": "YOUR_WEBHOOK_ID",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": " { \n   \"status\": \"ignored\", \"reason\": \"not a PR opened event\" \n }",
+        "options": {
+          "responseCode": "={{ 200 }}"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        208,
+        176
+      ],
+      "id": "1e98900e-d4e7-48cd-b2fd-98ab5042ccd8",
+      "name": "Respond: Ignored"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\", \"message\": \"PR description generated and posted\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1488,
+        -144
+      ],
+      "id": "9b2357b1-320b-4cd2-b082-58d9d3f08425",
+      "name": "Respond: PR Processed"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"error\", \"message\": \"workflow failed, see n8n logs\"\n}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        816,
+        160
+      ],
+      "id": "5cb74aed-70ed-42a8-9d77-bffe443562e5",
+      "name": "Respond: PR Failed"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github-pr-event",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -80,
+        -80
+      ],
+      "id": "0ca8994b-8ede-4b43-adee-9ebdeb31c63a",
+      "name": "Wait for PR call",
+      "webhookId": "YOUR_WEBHOOK_ID"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Fetch Commits",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Ignored",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Commits": {
+      "main": [
+        [
+          {
+            "node": "Generate PR Description",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "notify if PR fails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate PR Description": {
+      "main": [
+        [
+          {
+            "node": "Update Github PR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "notify if PR fails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Github PR": {
+      "main": [
+        [
+          {
+            "node": "notify if PR succeeds",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "notify if PR fails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "notify if PR succeeds": {
+      "main": [
+        [
+          {
+            "node": "Respond: PR Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "notify if PR fails": {
+      "main": [
+        [
+          {
+            "node": "Respond: PR Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for PR call": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "93da1c44-da12-42de-a32d-79ae0fc073ea",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "idType"
+  },
+  "nodeGroups": [],
+  "id": "YOUR_WORKFLOW_ID",
+  "tags": [
+    {
+      "updatedAt": "2026-08-08T12:21:56.997Z",
+      "createdAt": "2026-08-08T12:21:56.997Z",
+      "id": "8zoGaJUcImQQTPtt",
+      "name": "github"
+    },
+    {
+      "updatedAt": "2026-08-08T12:21:53.945Z",
+      "createdAt": "2026-08-08T12:21:53.945Z",
+      "id": "H95UQ2VzqMYAoVwv",
+      "name": "pr-bot"
+    },
+    {
+      "updatedAt": "2026-08-08T12:22:04.476Z",
+      "createdAt": "2026-08-08T12:22:04.476Z",
+      "id": "pPtlhkiivxpD8LZ7",
+      "name": "pull-request"
+    }
+  ]
+}
